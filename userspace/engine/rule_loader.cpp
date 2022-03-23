@@ -703,7 +703,7 @@ void rule_loader::compile_rule_infos(
 				}
 			}
 
-			set<uint16_t> evttypes;
+			set<uint16_t> evttypes = { ppm_event_type::PPME_PLUGINEVENT_E };
 			if(rule.source == falco_common::syscall_source)
 			{
 				filter_evttype_resolver resolver;
@@ -716,16 +716,6 @@ void rule_loader::compile_rule_infos(
 						+ "		 matches too many evt.type values.\n"
 						+ "		 This has a significant performance penalty.");
 				}
-			}
-			else if (rule.source == "k8s_audit")
-			{
-				// todo(jasondellaluce): remove this case once k8saudit
-				// gets ported to a plugin
-				evttypes = { ppm_event_type::PPME_GENERIC_X };
-			}
-			else
-			{
-				evttypes = { ppm_event_type::PPME_PLUGINEVENT_E };
 			}
 
 			cfg.engine->add_filter(filter, rule.name, rule.source, evttypes, rule.tags);
