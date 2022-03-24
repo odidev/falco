@@ -707,6 +707,7 @@ void rule_loader::compile_rule_infos(
 			if(rule.source == falco_common::syscall_source)
 			{
 				filter_evttype_resolver resolver;
+				evttypes.clear();
 				resolver.evttypes(ast, evttypes);
 				if ((evttypes.empty() || evttypes.size() > 100)
 					&& r.warn_evttypes)

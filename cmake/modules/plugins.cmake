@@ -18,6 +18,18 @@ string(TOLOWER ${CMAKE_HOST_SYSTEM_NAME} PLUGINS_SYSTEM_NAME)
 # todo(jasondellaluce): switch this to a stable version once this plugin gets
 # released with a 1.0.0 required plugin api version
 ExternalProject_Add(
+  k8saudit-plugin
+  URL "https://download.falco.org/plugins/dev/k8saudit-0.1.0-0.0.0-0%2B73eab5f-${PLUGINS_SYSTEM_NAME}-${CMAKE_HOST_SYSTEM_PROCESSOR}.tar.gz"
+  URL_HASH "SHA256=e97f375a9391a9dbabd9c5855b06c4f0de2e529360eb4aee90d7db309af08b31"
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND ""
+  INSTALL_COMMAND "")
+
+install(FILES "${PROJECT_BINARY_DIR}/k8saudit-plugin-prefix/src/k8saudit-plugin/libk8saudit.so" DESTINATION "${FALCO_PLUGINS_DIR}")
+
+# todo(jasondellaluce): switch this to a stable version once this plugin gets
+# released with a 1.0.0 required plugin api version
+ExternalProject_Add(
   cloudtrail-plugin
   URL "https://download.falco.org/plugins/dev/cloudtrail-0.2.5-0.2.5-8%2B2c1bb25-${PLUGINS_SYSTEM_NAME}-${CMAKE_HOST_SYSTEM_PROCESSOR}.tar.gz"
   URL_HASH "SHA256=eeefbeb639e41e37cd864042d8b4854e0af451e6b8b34a14c39332771e94ee5b"
