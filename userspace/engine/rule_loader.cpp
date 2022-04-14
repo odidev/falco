@@ -45,22 +45,6 @@ static void paren_item(string& e)
 	}
 }
 
-static bool is_field_defined(
-	falco_engine *engine, const string& source, string field)
-{
-	auto factory = engine->get_filter_factory(source);
-	if(factory)
-	{
-		auto *chk = factory->new_filtercheck(field.c_str());
-		if (chk)
-		{
-			delete(chk);
-			return true;
-		}
-	}
-	return false;
-}
-
 // todo(jasondellaluce): add an helper in libsinsp for this
 static bool is_operator_defined(const string& op)
 {
@@ -76,13 +60,12 @@ static bool is_operator_for_list(const string& op)
 	return op == "in" || op == "intersects" || op == "pmatch";
 }
 
-static bool is_format_valid(
-	falco_engine* e, const string& src, const string& fmt, string& err)
+static bool is_format_valid(const falco_source& source, string fmt, string& err)
 {
 	try
 	{
 		shared_ptr<gen_event_formatter> formatter;
-		formatter = e->create_formatter(src, fmt);
+		formatter = source.formatter_factory->create_formatter(fmt);
 		return true;
 	}
 	catch(exception &e)
@@ -118,9 +101,8 @@ static inline void append_info(T* prev, T& info, uint32_t id)
 }
 
 static void validate_exception_info(
-	rule_loader::configuration& cfg,
-	rule_loader::rule_exception_info &ex,
-	const string& source)
+	const falco_source& source,
+	rule_loader::rule_exception_info &ex)
 {
 	if (ex.fields.is_list)
 	{
@@ -143,7 +125,7 @@ static void validate_exception_info(
 		}
 		for (auto &v : ex.fields.items)
 		{
-			THROW(!is_field_defined(cfg.engine, source, v.item),
+			THROW(!source.is_field_defined(v.item),
 				"Rule exception item " + ex.name + ": field name "
 					+ v.item + " is not a supported filter field");
 		}
@@ -160,7 +142,7 @@ static void validate_exception_info(
 		THROW(!is_operator_defined(ex.comps.item),
 			"Rule exception item " + ex.name + ": comparison operator "
 				+ ex.comps.item + " is not a supported comparison operator");
-		THROW(!is_field_defined(cfg.engine, source, ex.fields.item),
+		THROW(!source.is_field_defined(ex.fields.item),
 			"Rule exception item " + ex.name + ": field name "
 				+ ex.fields.item + " is not a supported filter field");
 	}
@@ -370,32 +352,6 @@ static shared_ptr<ast::expr> parse_condition(
 	}
 }
 
-static shared_ptr<gen_event_filter> compile_condition(
-		falco_engine* engine,
-		uint32_t id,
-		shared_ptr<ast::expr> cnd,
-		string src,
-		string& err)
-{
-	try
-	{
-		auto factory = engine->get_filter_factory(src);
-		sinsp_filter_compiler compiler(factory, cnd.get());
-		compiler.set_check_id(id);
-		shared_ptr<gen_event_filter> ret(compiler.compile());
-		return ret;
-	}
-	catch (const sinsp_exception& e)
-	{
-		err = e.what();
-	}
-	catch (const falco_exception& e)
-	{
-		err = e.what();
-	}
-	return nullptr;
-}
-
 static void apply_output_substitutions(
 	rule_loader::configuration& cfg,
 	string& out)
@@ -477,7 +433,7 @@ void rule_loader::append(configuration& cfg, list_info& info)
 
 void rule_loader::define(configuration& cfg, macro_info& info)
 {
-	if (!cfg.engine->is_source_valid(info.source))
+	if (!cfg.sources.at(info.source))
 	{
 		cfg.warnings.push_back("Macro " + info.name
 			+ ": warning (unknown-source): unknown source "
@@ -499,7 +455,8 @@ void rule_loader::append(configuration& cfg, macro_info& info)
 
 void rule_loader::define(configuration& cfg, rule_info& info)
 {
-	if (!cfg.engine->is_source_valid(info.source))
+	auto source = cfg.sources.at(info.source);
+	if (!source)
 	{
 		cfg.warnings.push_back("Rule " + info.name
 			+ ": warning (unknown-source): unknown source "
@@ -515,7 +472,7 @@ void rule_loader::define(configuration& cfg, rule_info& info)
 	{
 		THROW(!ex.fields.is_valid(), "Rule exception item "
 			+ ex.name + ": must have fields property with a list of fields");
-		validate_exception_info(cfg, ex, info.source);
+		validate_exception_info(*source, ex);
 	}
 
 	define_info(m_rule_infos, info, m_cur_index++);
@@ -528,6 +485,11 @@ void rule_loader::append(configuration& cfg, rule_info& info)
 		+ " has 'append' key but no rule by that name already exists");
 	THROW(info.cond.empty() && info.exceptions.empty(),
 		"Appended rule must have exceptions or condition property");
+
+	auto source = cfg.sources.at(prev->source);
+	// note: this is not supposed to happen
+	THROW(!source, "Rule " + prev->name
+		+ ": error (unknown-source): unknown source " + prev->source);
 
 	if (!info.cond.empty())
 	{
@@ -546,7 +508,7 @@ void rule_loader::append(configuration& cfg, rule_info& info)
 				+ ex.name + ": must have fields property with a list of fields");
 			THROW(ex.values.empty(), "Rule exception new item "
 				+ ex.name + ": must have fields property with a list of values");
-			validate_exception_info(cfg, ex, prev->source);
+			validate_exception_info(*source, ex);
 			prev->exceptions.push_back(ex);
 		}
 		else
@@ -656,12 +618,17 @@ void rule_loader::compile_rule_infos(
 	{
 		try
 		{
+			falco_rule rule;
 			if (r.priority > cfg.min_priority)
 			{
 				continue;
 			}
 
-			falco_rule rule;
+			auto source = cfg.sources.at(r.source);
+			// note: this is not supposed to happen
+			THROW(!source, "Rule " + r.name
+				+ ": error (unknown-source): unknown source " + r.source);
+
 			condition = r.cond;
 			if (!r.exceptions.empty())
 			{
@@ -676,22 +643,26 @@ void rule_loader::compile_rule_infos(
 			{
 				apply_output_substitutions(cfg, rule.output);
 			}
-			THROW(!is_format_valid(cfg.engine, r.source, rule.output, err), 
-				"Invalid output format '" + rule.output + "': '" + err + "'");
-			
+			THROW(!is_format_valid(*source, rule.output, err), 
+				"Invalid output format '" + rule.output + "': '" + err + "'");	
 			
 			rule.name = r.name;
 			rule.source = r.source;
 			rule.description = r.desc;
 			rule.priority = r.priority;
 			rule.tags = r.tags;
-			// note: indexes are 0-based, but 0 is not an acceptable rule_id
-			auto id = out.insert(rule, rule.name) + 1;
-			auto filter = compile_condition(cfg.engine, id, ast, rule.source, err);
-			if (!filter)
+			try
 			{
-				if (r.skip_if_unknown_filter
-					&& err.find("nonexistent field") != string::npos)
+				auto rule_id = out.insert(rule, rule.name);
+				out.at(rule_id)->id = rule_id;
+				source->ruleset->add(*out.at(rule_id), ast);
+				source->ruleset->enable(rule.name, false, r.enabled);
+			}
+			catch (falco_exception& e)
+			{
+				string err = e.what();
+				if (err.find("nonexistent field") != string::npos
+					&& r.skip_if_unknown_filter)
 				{
 					cfg.warnings.push_back(
 						"Rule " + rule.name + ": warning (unknown-field):");
@@ -727,9 +698,6 @@ void rule_loader::compile_rule_infos(
 			{
 				evttypes = { ppm_event_type::PPME_PLUGINEVENT_E };
 			}
-
-			cfg.engine->add_filter(filter, rule.name, rule.source, evttypes, rule.tags);
-			cfg.engine->enable_rule(rule.name, r.enabled);
 		}
 		catch (exception& e)
 		{
