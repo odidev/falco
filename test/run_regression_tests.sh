@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT=$(readlink -f $0)
 SCRIPTDIR=$(dirname "$SCRIPT")
 SKIP_PACKAGES_TESTS=${SKIP_PACKAGES_TESTS:-false}
-SKIP_PLUGINS_TESTS=${SKIP_PLUGINS_TESTS:-false}
+SKIP_PLUGINS_TESTS=${SKIP_PLUGINS_TESTS:-true}
 TRACE_FILES_BASE_URL=${TRACE_FILES_BASE_URL:-"https://download.falco.org/fixtures/trace-files/"}
 
 # Trace file tarballs are now versioned. Any time a substantial change
